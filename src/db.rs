@@ -1,11 +1,11 @@
 use anyhow::{bail, Context, Result};
+use atomicwrites::AtomicFile;
 use bincode::Options;
 use float_ord::FloatOrd;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use std::fmt::{self, Display, Formatter};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -15,7 +15,7 @@ struct DbVersion(u32);
 pub struct Db {
     pub dirs: Vec<Dir>,
     pub modified: bool,
-    data_dir: PathBuf,
+    path: PathBuf,
 }
 
 impl Db {
@@ -26,7 +26,7 @@ impl Db {
         fs::create_dir_all(&data_dir)
             .with_context(|| format!("unable to create data directory: {}", data_dir.display()))?;
 
-        let path = Self::get_path(&data_dir);
+        let path = data_dir.join("db.zo");
 
         let buffer = match fs::read(&path) {
             Ok(buffer) => buffer,
@@ -34,7 +34,7 @@ impl Db {
                 return Ok(Db {
                     dirs: Vec::new(),
                     modified: false,
-                    data_dir,
+                    path,
                 })
             }
             Err(e) => {
@@ -47,7 +47,7 @@ impl Db {
             return Ok(Db {
                 dirs: Vec::new(),
                 modified: false,
-                data_dir,
+                path,
             });
         }
 
@@ -85,7 +85,7 @@ impl Db {
         Ok(Db {
             dirs,
             modified: false,
-            data_dir,
+            path,
         })
     }
 
@@ -108,63 +108,20 @@ impl Db {
         })()
         .context("could not serialize database")?;
 
-        let db_path_tmp = Self::get_path_tmp(&self.data_dir);
+        AtomicFile::new(&self.path, atomicwrites::AllowOverwrite)
+            .write(|db_file| {
+                let _ = db_file.set_len(buffer_size);
+                db_file.write_all(&buffer)
+            })
+            .with_context(|| format!("could not write to database: {}", self.path.display()))?;
 
-        let mut db_file_tmp = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&db_path_tmp)
-            .with_context(|| {
-                format!(
-                    "could not create temporary database: {}",
-                    db_path_tmp.display()
-                )
-            })?;
-
-        // File::set_len() can fail on some filesystems, so we ignore errors
-        let _ = db_file_tmp.set_len(buffer_size);
-
-        (|| -> anyhow::Result<()> {
-            db_file_tmp.write_all(&buffer).with_context(|| {
-                format!(
-                    "could not write to temporary database: {}",
-                    db_path_tmp.display()
-                )
-            })?;
-
-            let db_path = Self::get_path(&self.data_dir);
-
-            fs::rename(&db_path_tmp, &db_path)
-                .with_context(|| format!("could not create database: {}", db_path.display()))
-        })()
-        .map_err(|e| {
-            fs::remove_file(&db_path_tmp)
-                .with_context(|| {
-                    format!(
-                        "could not remove temporary database: {}",
-                        db_path_tmp.display()
-                    )
-                })
-                .err()
-                .unwrap_or(e)
-        })?;
-
-        self.modified = true;
+        self.modified = false;
 
         Ok(())
     }
 
     pub fn matches<'a>(&'a mut self, now: Epoch, keywords: &[String]) -> DbMatches<'a> {
         DbMatches::new(self, now, keywords)
-    }
-
-    fn get_path<P: AsRef<Path>>(data_dir: P) -> PathBuf {
-        data_dir.as_ref().join("db.zo")
-    }
-
-    fn get_path_tmp<P: AsRef<Path>>(data_dir: P) -> PathBuf {
-        let file_name = format!("db-{}.zo.tmp", Uuid::new_v4());
-        data_dir.as_ref().join(file_name)
     }
 }
 

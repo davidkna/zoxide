@@ -14,6 +14,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.28"
+atomicwrites = "0.2.5"
 bincode = "1.2.1"
 clap = "2.33.0"
 dirs = "3.0.0"
