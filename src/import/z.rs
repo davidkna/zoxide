@@ -44,7 +44,9 @@ impl Import for Z {
                 match store.dirs.iter_mut().find(|dir| dir.path == path) {
                     Some(dir) => {
                         dir.rank += rank;
-                        dir.last_accessed = dir.last_accessed.max(last_accessed);
+                        if dir.last_accessed < last_accessed {
+                            dir.last_accessed = last_accessed;
+                        }
                     }
                     None => store.dirs.push(Dir {
                         path: Cow::Owned(path.into()),

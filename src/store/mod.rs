@@ -20,7 +20,7 @@ pub struct Store<'a> {
     data_dir: &'a Path,
 }
 
-impl<'a> Store<'a> {
+impl Store<'_> {
     pub fn save(&mut self) -> Result<()> {
         if !self.modified {
             return Ok(());
@@ -55,7 +55,6 @@ impl<'a> Store<'a> {
 
     pub fn add<S: AsRef<str>>(&mut self, path: S, now: Epoch) {
         let path = path.as_ref();
-        debug_assert!(Path::new(path).is_absolute());
 
         match self.dirs.iter_mut().find(|dir| dir.path == path) {
             None => self.dirs.push(Dir {
@@ -72,14 +71,20 @@ impl<'a> Store<'a> {
         self.modified = true;
     }
 
-    pub fn iter_matches<'b>(
-        &'b mut self,
-        query: &'b Query,
+    pub fn iter_matches<'a>(
+        &'a mut self,
+        query: &'a Query,
         now: Epoch,
-    ) -> impl DoubleEndedIterator<Item = &'b Dir> {
+    ) -> impl Iterator<Item = &Dir> {
+        // TODO: ensure that this is only called on Windows.
         self.cleanup();
+
+        // Sort directories in descending order of score.
         self.dirs
             .sort_unstable_by_key(|dir| Reverse(OrderedFloat(dir.score(now))));
+
+        // Filter out directories that do not match the query, or do not
+        // currently exist.
         self.dirs.iter().filter(move |dir| dir.is_match(&query))
     }
 
@@ -96,35 +101,41 @@ impl<'a> Store<'a> {
     }
 
     pub fn age(&mut self, max_age: Rank) {
-        let sum_age = self.dirs.iter().map(|dir| dir.rank).sum::<Rank>();
-
-        if sum_age > max_age {
-            let factor = 0.9 * max_age / sum_age;
-
-            for idx in (0..self.dirs.len()).rev() {
-                let dir = &mut self.dirs[idx];
-
-                dir.rank *= factor;
-                if dir.rank < 1.0 {
-                    self.dirs.swap_remove(idx);
-                }
-            }
-
-            self.modified = true;
+        let total_age = self.dirs.iter().map(|dir| dir.rank).sum::<Rank>();
+        if total_age <= max_age {
+            return;
         }
-    }
 
-    fn cleanup(&mut self) {
-        // Iterate through dirs in reverse. This allows us to use
+        // Factor by which to change directory rank.
+        let factor = 0.9 * max_age / total_age;
+
+        // Iterate through directory indexes in reverse. This allows us to use
         // [`Vec::swap_remove`] without skipping an element.
         for idx in (0..self.dirs.len()).rev() {
-            // Canonicalize the path of the current directory. Ignore any
-            // kind of error here, since paths that are added to the store
-            // cannot be removed except by aging.
-            let path = Path::new(self.dirs[idx].path.as_ref());
-            if let Ok(path_new) = dunce::canonicalize(path) {
+            let dir = &mut self.dirs[idx];
+            dir.rank *= factor;
+            if dir.rank < 1.0 {
+                self.dirs.swap_remove(idx);
+            }
+        }
+
+        self.modified = true;
+    }
+
+    // Canonicalize all paths in store. This is an expensive operation, but is
+    // useful for filesystems that are case-preserving but not case-sensitive.
+    fn cleanup(&mut self) {
+        // Iterate through directory indexes in reverse. This allows us to use
+        // [`Vec::swap_remove`] without skipping an element.
+        for idx in (0..self.dirs.len()).rev() {
+            let path_old = Path::new(self.dirs[idx].path.as_ref());
+
+            // Canonicalize the path of the directory. Skip all errors here,
+            // since paths that are added to the store cannot be removed except
+            // by aging.
+            if let Ok(path_new) = dunce::canonicalize(path_old) {
                 // Only perform deduplication if the path has changed.
-                if path_new == path {
+                if path_new == path_old {
                     continue;
                 }
                 let path_new = match path_new.to_str() {
@@ -132,26 +143,28 @@ impl<'a> Store<'a> {
                     None => continue,
                 };
 
-                // Remove the old directory.
+                // Remove the old directory from the store.
                 let mut dir_old = self.dirs.swap_remove(idx);
 
-                // Check if the new path already exists in the store.
-                match self.dirs.iter().position(|dir| dir.path == path_new) {
+                // Check if a directory with the new path already exists in
+                // the store.
+                match self.dirs.iter_mut().find(|dir| dir.path == path_new) {
                     // If it exists, use the old directory to update it.
-                    Some(idx_new) => {
-                        let dir_new = &mut self.dirs[idx_new];
+                    Some(dir_new) => {
                         dir_new.rank += dir_old.rank;
                         if dir_new.last_accessed < dir_old.last_accessed {
                             dir_new.last_accessed = dir_old.last_accessed;
                         }
                     }
-                    // If it does not exist, update the old directory itself
-                    // and add it back.
+                    // If it does not exist, update the old directory path and
+                    // add it back to the store.
                     None => {
-                        dir_old.path = Cow::Owned(path_new.to_string());
+                        dir_old.path = Cow::Owned(path_new.into());
                         self.dirs.push(dir_old);
                     }
                 }
+
+                self.modified = true;
             }
         }
     }
