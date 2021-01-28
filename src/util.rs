@@ -6,8 +6,8 @@ use std::env;
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
-pub fn canonicalize<P: AsRef<Path>>(path: &P) -> Result<PathBuf> {
-    dunce::canonicalize(path)
+pub fn canonicalize<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
+    dunce::canonicalize(&path)
         .with_context(|| format!("could not resolve path: {}", path.as_ref().display()))
 }
 
@@ -35,7 +35,7 @@ pub fn path_to_str<P: AsRef<Path>>(path: &P) -> Result<&str> {
 /// If path is already absolute, the path is still processed to be cleaned, as it can contained ".." or "." (or other)
 /// character.
 /// If path is relative, use the current directory to build the absolute path.
-pub fn resolve_path<P: AsRef<Path>>(path: &P) -> Result<PathBuf> {
+pub fn resolve_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     let path = path.as_ref();
     let base_path;
 
