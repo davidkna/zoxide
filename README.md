@@ -114,10 +114,16 @@ zoxide for interactive selection. Installation instructions can be found
 ### Step 3: Add zoxide to your shell
 
 If you currently use `z`, `z.lua`, or `zsh-z`, you may want to first import
-your existing database into `zoxide`:
+your existing entries into `zoxide`:
 
 ```sh
 zoxide import /path/to/db
+```
+
+Alternatively, for `autojump`:
+
+```sh
+zoxide import --from autojump /path/to/db
 ```
 
 <!-- omit in toc -->
@@ -192,7 +198,7 @@ eval "$(zoxide init posix --hook prompt)"
 
 ### Environment variables
 
-- `$_ZO_DATA_DIR`: directory where `zoxide` will store its data files
+- `$_ZO_DATA_DIR`: directory for `zoxide` data files
   (default: platform-specific; see the [`dirs` documentation] for more information)
 - `$_ZO_ECHO`: when set to `1`, `z` will print the matched directory before navigating to it
 - `$_ZO_EXCLUDE_DIRS`: list of directories separated by platform-specific characters
